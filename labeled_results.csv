@@ -1,0 +1,137 @@
+id,text,response,votes_diagram,votes_video,votes_audio,votes_text,total_votes,is_finalized,is_reported,label
+1326,can you draw me a picture?,"I'm sorry, as an AI language model, I do not have the capability to draw pictures. Is there anything else I can assist you with?",0,1,0,0,1,0,0,video
+1425,"проверь код пиши на русском 
+
+проверь 
+async def main():
+    proxy_change_count = 0
+    exit_flag = asyncio.Event()
+    print(exit_flag.is_set())
+    delays = [5, 10, 30, 60, 600, 1800]  # Задержки между подключениями к прокси
+    repeat_cycle = False
+    while True:
+        if repeat_cycle:
+            continue
+        logger.info(""Main начал цикл с нуля , беру прокси"")
+        proxy = proxymanagment.get_new_proxy(args.country_proxy)
+
+        if not proxy:
+            logger.info(""Иду получать новый прокси"")
+            return
+        logger.info(f""взял проки и подключаюсь {proxy}"")
+
+        connected = await proxymanagment.check_proxy(proxy)
+        connection_attempts = 0
+        while not connected and connection_attempts < 5:
+            connection_attempts += 1
+            connected = await proxymanagment.check_proxy(proxy)
+
+        if connected == False:
+            logger.info(""Иду получать новый прокси"")
+            if proxy_change_count < len(delays):
+                await asyncio.sleep(delays[proxy_change_count])
+                proxy_change_count += 1
+            else:
+                await asyncio.sleep(random.randint(1000, 2000))
+            continue
+
+        client = TelegramClient(
+            args.session_file,
+            args.api_id,
+            args.api_hash,
+            device_model=args.device_model,
+            system_version=args.system_version,
+            app_version=args.app_version,
+            system_lang_code=args.system_lang_code,
+            lang_code=args.app_lang_code,
+            proxy=(socks.SOCKS5, proxy['addr'], proxy['port'], True, proxy['username'], proxy['password']),
+            retry_delay=30,
+            auto_reconnect=False,
+            sequential_updates=True
+        )
+
+        
+        await client.connect()
+        logger.info(f""Подключились к телеграмм с сессией: {args.session_file} , работаем с клиентом {client}"")
+        print(f""Подключились к телеграмм с сессией: {args.session_file}"")
+
+        try:
+                logger.info(f""делаю sign in"")
+                await client.sign_in()
+                logger.info(f""Сделал sign in"")
+                
+        except errors.AuthKeyDuplicatedError as e:
+                await asyncio.sleep(1)
+                error_message = ""You must provide a phone and a code the first time, and a password only if an RPCError was raised before""
+                await asyncio.sleep(1)
+                logger.info(f""Error: {e} - Ошибка авторизации, аккаунт заблокирован или ограничен."")
+
+                async with aiofile.async_open(args.message_file, ""a"", encoding=""utf-8"") as message_file:
+                    await message_file.write(f""{error_message}\n"")
+                logger.info(f""Устанавливаю флаг труе"")
+                exit_flag = True
+                logger.info(exit_flag.is_set())
+        if exit_flag.is_set():
+                logger.info(f""Exit flag true. {exit_flag}"")
+                break
+
+        entity_cache = {}
+        async with client:
+                logger.info(f""Запускаю Эвент хендлер"")
+                client.add_event_handler(partial(message_handler, entity_cache=entity_cache), events.NewMessage(incoming=True))
+
+                logger.info(f""Запускаю второй эвент хендлер"")
+                client.add_event_handler(on_user_update, events.UserUpdate)
+
+                logger.info(f""Запускаю Командную функцию"")
+                process_commands_task = client.loop.create_task(command.process_commands(client, args.command_file, args.message_file, args.cache_dir, exit_flag))
+                logger.info(f""Запускаю запись статуса"")
+                write_status_task = client.loop.create_task(managemessage.write_status(args.status_file))
+                try:
+                    await client.run_until_disconnected()  # Ждем дисконнекта
+                except Exception as e:
+                    logger.error(f""Произошел дисконнект: {e}"")
+                    repeat_cycle = True
+        while repeat_cycle:
+                logger.info(f""Цикл Вайл запущен"")
+                try:
+                    logger.info(f""Ожидаю отключения сети"")
+                    await client.run_until_disconnected()
+                    logger.info(f""Потерял коннект"")
+                    if exit_flag.is_set():
+                        logger.error(f""Пытаюсь закрыть инстанс"")
+                        sys.exit()
+                    if not exit_flag.is_set():
+                        await reconnect(client)
+                        logger.info(f""if not exit_flag.is_set(): проблема тут "")
+                        await client.run_until_disconnected()
+                        repeat_cycle = True 
+                        
+                            
+                    logger.info(f""Клиент отключил соединение "")
+
+                except Exception as e:
+                    logger.error(f""пытаюсь выполнить функцию рекооннект ошибка: {e}"")
+                    error_message = f""Error: {e}""
+                    logger.info(error_message)
+                    await reconnect(client)
+                    logger.info(f""except Exception as e:: проблема тут "")                            
+                    async with aiofile.async_open(args.message_file, ""a"", encoding=""utf-8"") as message_file:
+                        await message_file.write(f""{error_message}\n"")
+                        await client.run_until_disconnected()
+                        continue
+                    logger.info(f""блок перед иф ю мост "")
+                    if ""You must provide a phone and a code the first time, and a password only if an RPCError was raised before"" in error_message:
+                        exit_flag = True  # Устанавливаем флаг на True при возникновении ошибки
+                    logger.info(f""блок проверки процесс комманд"")
+                    if await process_commands_task:
+                        logger.error(f""Хрень в процесс комманд: {e}"")
+                        continue  # Возвращаемся к началу внутреннего цикла
+                        
+                    else:
+                        logger.error(f""Сделал функцию рекоонект  в самом низу вайла"")
+                        await reconnect(client)
+                        await client.run_until_disconnected()
+                        continue
+                    continue
+        continue","Код выглядит правильным и должен работать без ошибок. Если вам нужно получить объяснение определенных частей кода, пожалуйста, уточните, и я с радостью помогу!",0,0,1,0,1,0,0,audio
