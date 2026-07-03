@@ -1,7 +1,9 @@
+import psycopg2
+import psycopg2.extras
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import sqlite3
 
 app = FastAPI()
 
@@ -14,8 +16,7 @@ app.add_middleware(
 )
 
 def get_db():
-    conn = sqlite3.connect("labeling.db")
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
     return conn
 
 class LabelSubmission(BaseModel):
@@ -28,14 +29,14 @@ VOTE_THRESHOLD = 3
 @app.get("/next-prompt")
 def get_next_prompt(session_id: str):
     conn = get_db()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cursor.execute("""
         SELECT p.id, p.text, p.response
         FROM prompts p
-        WHERE p.is_finalized = 0
+        WHERE p.is_finalized = FALSE
         AND p.id NOT IN (
-            SELECT prompt_id FROM submissions WHERE session_id = ?
+            SELECT prompt_id FROM submissions WHERE session_id = %s
         )
         ORDER BY RANDOM()
         LIMIT 1
@@ -52,12 +53,12 @@ def get_next_prompt(session_id: str):
 @app.post("/submit-label")
 def submit_label(submission: LabelSubmission):
     conn = get_db()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     
     # Record the individual submission
     cursor.execute("""
         INSERT INTO submissions (prompt_id, session_id, label)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
     """, (submission.prompt_id, submission.session_id, submission.label))
     
     # Update vote counts on the prompt
@@ -66,14 +67,14 @@ def submit_label(submission: LabelSubmission):
         UPDATE prompts
         SET {label_column} = {label_column} + 1,
             total_votes = total_votes + 1
-        WHERE id = ?
+        WHERE id = %s
     """, (submission.prompt_id,))
     
     # Check if it's hit the threshold and finalize
     cursor.execute("""
         UPDATE prompts
-        SET is_finalized = 1
-        WHERE id = ? AND total_votes >= ?
+        SET is_finalized = TRUE
+        WHERE id = %s AND total_votes >= %s
     """, (submission.prompt_id, VOTE_THRESHOLD))
     
     conn.commit()
@@ -90,16 +91,16 @@ class ReportSubmission(BaseModel):
 @app.post("/report-prompt")
 def report_prompt(report: ReportSubmission):
     conn = get_db()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     cursor.execute("""
         INSERT INTO reports (prompt_id, session_id, reason)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
     """, (report.prompt_id, report.session_id, report.reason))
 
     # Pull it out of rotation immediately so others don't see it
     cursor.execute("""
-        UPDATE prompts SET is_finalized = 1, is_reported =1 WHERE id = ?
+        UPDATE prompts SET is_finalized = TRUE, is_reported =TRUE WHERE id = %s
     """, (report.prompt_id,))
 
     conn.commit()

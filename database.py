@@ -1,17 +1,18 @@
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import pandas as pd
+import os
 
-conn = sqlite3.connect("/Users/alisaliao/Documents/media_classifier/labeling.db")
-cursor = conn.cursor()
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
+cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-# Wipe everything
-cursor.execute("DROP TABLE IF EXISTS prompts")
 cursor.execute("DROP TABLE IF EXISTS submissions")
 cursor.execute("DROP TABLE IF EXISTS reports")
+cursor.execute("DROP TABLE IF EXISTS prompts")
 
 cursor.execute("""
 CREATE TABLE prompts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     text TEXT NOT NULL,
     response TEXT,
     votes_diagram INTEGER DEFAULT 0,
@@ -19,47 +20,41 @@ CREATE TABLE prompts (
     votes_audio INTEGER DEFAULT 0,
     votes_text INTEGER DEFAULT 0,
     total_votes INTEGER DEFAULT 0,
-    is_finalized BOOLEAN DEFAULT 0,
-    is_reported BOOLEAN DEFAULT 0
+    is_finalized BOOLEAN DEFAULT FALSE,
+    is_reported BOOLEAN DEFAULT FALSE
 )
 """)
 
 cursor.execute("""
 CREATE TABLE submissions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    prompt_id INTEGER NOT NULL,
+    id SERIAL PRIMARY KEY,
+    prompt_id INTEGER NOT NULL REFERENCES prompts(id),
     session_id TEXT NOT NULL,
     label TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
 cursor.execute("""
 CREATE TABLE reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    prompt_id INTEGER NOT NULL,
+    id SERIAL PRIMARY KEY,
+    prompt_id INTEGER NOT NULL REFERENCES prompts(id),
     session_id TEXT NOT NULL,
     reason TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (prompt_id) REFERENCES prompts(id)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
 conn.commit()
 
-# Load prompts with both columns
+# Load prompts
 df = pd.read_csv("wildchat_prompts.csv")
-df[["prompt", "response"]].rename(columns={"prompt": "text"}).to_sql(
-    "prompts", conn, if_exists="append", index=False
-)
+for _, row in df.iterrows():
+    cursor.execute(
+        "INSERT INTO prompts (text, response) VALUES (%s, %s)",
+        (row["prompt"], row["response"])
+    )
 
-# Verify
-cursor.execute("PRAGMA table_info(prompts)")
-for col in cursor.fetchall():
-    print(col)
-cursor.execute("SELECT COUNT(*) FROM prompts")
-print(cursor.fetchone())
-
+conn.commit()
 conn.close()
 print("done")
