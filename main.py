@@ -112,19 +112,36 @@ def report_prompt(report: ReportSubmission):
 def get_stats():
     conn = get_db()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    
+
+    # Summary counts
     cursor.execute("""
         SELECT 
             COUNT(*) as total_prompts,
             SUM(CASE WHEN is_finalized THEN 1 ELSE 0 END) as finalized,
-            SUM(votes_diagram) as total_diagram,
-            SUM(votes_video) as total_video,
-            SUM(votes_audio) as total_audio,
-            SUM(votes_text) as total_text,
-            SUM(total_votes) as total_votes
+            SUM(CASE WHEN total_votes > 0 AND NOT is_finalized THEN 1 ELSE 0 END) as in_progress,
+            SUM(CASE WHEN total_votes = 0 THEN 1 ELSE 0 END) as unlabeled
         FROM prompts
+        WHERE is_reported = FALSE
     """)
-    
-    row = cursor.fetchone()
+    summary = cursor.fetchone()
+
+    # Individual prompts with at least one vote
+    cursor.execute("""
+        SELECT 
+            id, text, response,
+            votes_diagram, votes_video, votes_audio, votes_text,
+            total_votes, is_finalized,
+            CASE 
+                WHEN votes_diagram >= votes_video AND votes_diagram >= votes_audio AND votes_diagram >= votes_text THEN 'diagram'
+                WHEN votes_video >= votes_diagram AND votes_video >= votes_audio AND votes_video >= votes_text THEN 'video'
+                WHEN votes_audio >= votes_diagram AND votes_audio >= votes_video AND votes_audio >= votes_text THEN 'audio'
+                ELSE 'text'
+            END as leading_label
+        FROM prompts
+        WHERE total_votes > 0 AND is_reported = FALSE
+        ORDER BY total_votes DESC
+    """)
+    prompts = cursor.fetchall()
     conn.close()
-    return row
+
+    return {"summary": summary, "prompts": prompts}
