@@ -107,3 +107,24 @@ def report_prompt(report: ReportSubmission):
     conn.close()
 
     return {"success": True}
+
+@app.get("/stats")
+def get_stats():
+    conn = get_db()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_prompts,
+            SUM(CASE WHEN is_finalized THEN 1 ELSE 0 END) as finalized,
+            SUM(votes_diagram) as total_diagram,
+            SUM(votes_video) as total_video,
+            SUM(votes_audio) as total_audio,
+            SUM(votes_text) as total_text,
+            SUM(total_votes) as total_votes
+        FROM prompts
+    """)
+    
+    row = cursor.fetchone()
+    conn.close()
+    return row
